@@ -23,11 +23,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Initialize OpenAI client
-SUPER_MIND_API_KEY = os.getenv("SUPER_MIND_API_KEY")
+# Try SUPER_MIND_API_KEY first, then AI_BUILDER_TOKEN (for deployment platform)
+SUPER_MIND_API_KEY = os.getenv("SUPER_MIND_API_KEY") or os.getenv("AI_BUILDER_TOKEN")
 SUPER_MIND_BASE_URL = os.getenv("SUPER_MIND_BASE_URL", "https://space.ai-builders.com/backend/v1")
 
 if not SUPER_MIND_API_KEY:
-    st.error("SUPER_MIND_API_KEY not found in .env file!")
+    st.error("SUPER_MIND_API_KEY or AI_BUILDER_TOKEN not found! Please configure it in .env file or deployment config.")
     st.stop()
 
 openai_client = OpenAI(
@@ -70,21 +71,10 @@ def save_user_config(config):
 persisted_config = load_user_config()
 
 # Initialize session state with persisted values or defaults
+# Don't auto-load pre-existing index files - only use user-defined data
 if 'knowledge_base_built' not in st.session_state:
-    # More strict check: not only files exist, but also verify index is valid
-    index_exists = os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl")
-    if index_exists:
-        try:
-            # Try to load index to verify its validity
-            test_index = faiss.read_index("garmin.index")
-            if test_index.ntotal > 0:
-                st.session_state.knowledge_base_built = True
-            else:
-                st.session_state.knowledge_base_built = False
-        except Exception:
-            st.session_state.knowledge_base_built = False
-    else:
-        st.session_state.knowledge_base_built = False
+    # Only set to True if user explicitly builds index (not from pre-existing files)
+    st.session_state.knowledge_base_built = False
     
 if 'user_profile' not in st.session_state:
     st.session_state.user_profile = persisted_config.get('user_profile', {})
@@ -894,20 +884,28 @@ with st.sidebar:
         st.success(t('file_uploaded'))
         st.info("💡 " + ("历史数据已上传。将在点击'分析并获取建议'时自动构建索引。" if language == 'Chinese' else "Historical data uploaded. Index will be built automatically when you click 'Analyze & Coach Me'."))
     
-    # Check if historical data exists
-    if os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl"):
-        st.success(t('index_ready'))
-        # Show how many runs are indexed
-        try:
-            with open("garmin_data.pkl", 'rb') as f:
-                df = pickle.load(f)
-                st.info(f"已索引 {len(df)} 次跑步记录" if language == 'Chinese' else f"Indexed {len(df)} runs")
-        except:
-            pass
-        st.session_state.knowledge_base_built = True
+    # Only show historical data status if user has explicitly built index
+    # Don't show default/pre-existing index files - only show if user built it
+    if st.session_state.knowledge_base_built:
+        # User has built index from their uploaded CSV
+        if os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl"):
+            st.success(t('index_ready'))
+            # Show how many runs are indexed
+            try:
+                with open("garmin_data.pkl", 'rb') as f:
+                    df = pickle.load(f)
+                    st.info(f"已索引 {len(df)} 次跑步记录" if language == 'Chinese' else f"Indexed {len(df)} runs")
+            except:
+                pass
+    elif csv_file is not None:
+        # User just uploaded CSV but index not built yet
+        st.info("💡 " + ("历史数据已上传。将在点击'分析并获取建议'时自动构建索引。" if language == 'Chinese' else "Historical data uploaded. Index will be built automatically when you click 'Analyze & Coach Me'."))
+    elif os.path.exists("Garmin_Runing.csv"):
+        # CSV file exists but index not built yet
+        st.info("💡 " + ("已检测到历史数据文件。点击'分析并获取建议'按钮将自动构建索引" if language == 'Chinese' else "Historical data file detected. Click 'Analyze & Coach Me' button to build index automatically"))
     else:
-        st.warning(t('index_not_built'))
-        st.info("💡 提示：上传 Garmin_Runing.csv 文件并点击 '构建历史数据索引' 按钮" if language == 'Chinese' else "💡 Tip: Upload Garmin_Runing.csv and click 'Build Historical Data Index'")
+        # No CSV file uploaded
+        st.info("💡 " + ("上传 Garmin_Runing.csv 文件以构建历史数据索引" if language == 'Chinese' else "Upload Garmin_Runing.csv file to build historical data index"))
 
 
 # Main UI
