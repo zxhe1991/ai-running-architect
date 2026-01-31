@@ -20,4 +20,5 @@ EXPOSE 8501
 
 # Start Streamlit application using PORT environment variable
 # Use shell form (sh -c) to ensure environment variable expansion works correctly
-CMD sh -c "streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true"
+# Configure WebSocket support for reverse proxy
+CMD sh -c "streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=true"
