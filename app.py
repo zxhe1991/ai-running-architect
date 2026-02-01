@@ -14,7 +14,16 @@ import json
 import httpx
 import tempfile
 import base64
-from audio_recorder_streamlit import audio_recorder
+
+# Try to import audio recorder component, with fallback to file upload
+AUDIO_RECORDER_AVAILABLE = False
+try:
+    from audio_recorder_streamlit import audio_recorder
+    AUDIO_RECORDER_AVAILABLE = True
+except Exception as e:
+    # Component not available, will use file upload as fallback
+    AUDIO_RECORDER_AVAILABLE = False
+    print(f"Audio recorder component not available: {e}. Will use file upload fallback.")
 
 # Import analyzers
 from tcx_analyzer import analyze_tcx
@@ -1018,30 +1027,58 @@ with st.sidebar:
             key='historical_running_info_text'
         )
     else:
-        # Voice input for historical info - Real-time recording
+        # Voice input for historical info - Real-time recording or file upload fallback
         current_lang = st.session_state.language
-        st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
         
-        # Check if user wants to re-record (clear previous recording)
-        if st.button("🔄 " + t('re_record'), key='clear_historical_recording'):
-            # Clear previous recording and transcription
-            if 'historical_recorder' in st.session_state:
-                del st.session_state.historical_recorder
-            if 'historical_running_info_transcribed' in st.session_state:
-                del st.session_state.historical_running_info_transcribed
-            if 'historical_running_info' in st.session_state:
-                del st.session_state.historical_running_info
-            st.rerun()
-        
-        # Audio recorder component
-        audio_bytes_historical = audio_recorder(
-            text=t('record_audio'),
-            recording_color="#e74c3c",
-            neutral_color="#34495e",
-            icon_name="microphone",
-            icon_size="2x",
-            key='historical_recorder'
-        )
+        if AUDIO_RECORDER_AVAILABLE:
+            st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
+            
+            # Check if user wants to re-record (clear previous recording)
+            if st.button("🔄 " + t('re_record'), key='clear_historical_recording'):
+                # Clear previous recording and transcription
+                if 'historical_recorder' in st.session_state:
+                    del st.session_state.historical_recorder
+                if 'historical_running_info_transcribed' in st.session_state:
+                    del st.session_state.historical_running_info_transcribed
+                if 'historical_running_info' in st.session_state:
+                    del st.session_state.historical_running_info
+                st.rerun()
+            
+            # Audio recorder component
+            try:
+                audio_bytes_historical = audio_recorder(
+                    text=t('record_audio'),
+                    recording_color="#e74c3c",
+                    neutral_color="#34495e",
+                    icon_name="microphone",
+                    icon_size="2x",
+                    key='historical_recorder'
+                )
+            except Exception as e:
+                st.warning("⚠️ " + (f"录音组件加载失败: {e}. 请使用文件上传方式。" if current_lang == 'Chinese' else f"Audio recorder component failed to load: {e}. Please use file upload instead."))
+                audio_bytes_historical = None
+                # Fallback to file upload
+                st.info("💡 " + ("请上传音频文件（支持 MP3, WAV, FLAC 等格式）" if current_lang == 'Chinese' else "Please upload an audio file (supports MP3, WAV, FLAC, etc.)"))
+                audio_file_historical = st.file_uploader(
+                    t('record_audio'),
+                    type=['mp3', 'wav', 'flac', 'm4a', 'ogg'],
+                    key='historical_audio_uploader_fallback',
+                    help=t('record_audio')
+                )
+                if audio_file_historical is not None:
+                    audio_bytes_historical = audio_file_historical.read()
+        else:
+            # Fallback to file upload if component not available
+            st.info("💡 " + ("录音组件不可用，请上传音频文件（支持 MP3, WAV, FLAC 等格式）" if current_lang == 'Chinese' else "Audio recorder component not available. Please upload an audio file (supports MP3, WAV, FLAC, etc.)"))
+            audio_file_historical = st.file_uploader(
+                t('record_audio'),
+                type=['mp3', 'wav', 'flac', 'm4a', 'ogg'],
+                key='historical_audio_uploader',
+                help=t('record_audio')
+            )
+            audio_bytes_historical = None
+            if audio_file_historical is not None:
+                audio_bytes_historical = audio_file_historical.read()
         
         if audio_bytes_historical:
             # Convert base64 to bytes if needed
@@ -1248,30 +1285,58 @@ if subjective_input_method == t('text_input'):
         key='subjective_feeling_text'
     )
 else:
-    # Voice input for subjective feeling - Real-time recording
+    # Voice input for subjective feeling - Real-time recording or file upload fallback
     current_lang = st.session_state.language
-    st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
     
-    # Check if user wants to re-record (clear previous recording)
-    if st.button("🔄 " + t('re_record'), key='clear_subjective_recording'):
-        # Clear previous recording and transcription
-        if 'subjective_recorder' in st.session_state:
-            del st.session_state.subjective_recorder
-        if 'subjective_feeling_transcribed' in st.session_state:
-            del st.session_state.subjective_feeling_transcribed
-        if 'subjective_feeling' in st.session_state:
-            del st.session_state.subjective_feeling
-        st.rerun()
-    
-    # Audio recorder component
-    audio_bytes_subjective = audio_recorder(
-        text=t('record_audio'),
-        recording_color="#e74c3c",
-        neutral_color="#34495e",
-        icon_name="microphone",
-        icon_size="2x",
-        key='subjective_recorder'
-    )
+    if AUDIO_RECORDER_AVAILABLE:
+        st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
+        
+        # Check if user wants to re-record (clear previous recording)
+        if st.button("🔄 " + t('re_record'), key='clear_subjective_recording'):
+            # Clear previous recording and transcription
+            if 'subjective_recorder' in st.session_state:
+                del st.session_state.subjective_recorder
+            if 'subjective_feeling_transcribed' in st.session_state:
+                del st.session_state.subjective_feeling_transcribed
+            if 'subjective_feeling' in st.session_state:
+                del st.session_state.subjective_feeling
+            st.rerun()
+        
+        # Audio recorder component
+        try:
+            audio_bytes_subjective = audio_recorder(
+                text=t('record_audio'),
+                recording_color="#e74c3c",
+                neutral_color="#34495e",
+                icon_name="microphone",
+                icon_size="2x",
+                key='subjective_recorder'
+            )
+        except Exception as e:
+            st.warning("⚠️ " + (f"录音组件加载失败: {e}. 请使用文件上传方式。" if current_lang == 'Chinese' else f"Audio recorder component failed to load: {e}. Please use file upload instead."))
+            audio_bytes_subjective = None
+            # Fallback to file upload
+            st.info("💡 " + ("请上传音频文件（支持 MP3, WAV, FLAC 等格式）" if current_lang == 'Chinese' else "Please upload an audio file (supports MP3, WAV, FLAC, etc.)"))
+            audio_file_subjective = st.file_uploader(
+                t('record_audio'),
+                type=['mp3', 'wav', 'flac', 'm4a', 'ogg'],
+                key='subjective_audio_uploader_fallback',
+                help=t('record_audio')
+            )
+            if audio_file_subjective is not None:
+                audio_bytes_subjective = audio_file_subjective.read()
+    else:
+        # Fallback to file upload if component not available
+        st.info("💡 " + ("录音组件不可用，请上传音频文件（支持 MP3, WAV, FLAC 等格式）" if current_lang == 'Chinese' else "Audio recorder component not available. Please upload an audio file (supports MP3, WAV, FLAC, etc.)"))
+        audio_file_subjective = st.file_uploader(
+            t('record_audio'),
+            type=['mp3', 'wav', 'flac', 'm4a', 'ogg'],
+            key='subjective_audio_uploader',
+            help=t('record_audio')
+        )
+        audio_bytes_subjective = None
+        if audio_file_subjective is not None:
+            audio_bytes_subjective = audio_file_subjective.read()
     
     if audio_bytes_subjective:
         # Convert base64 to bytes if needed
