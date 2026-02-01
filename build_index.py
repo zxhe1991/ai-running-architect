@@ -14,11 +14,12 @@ import re
 load_dotenv()
 
 # Initialize OpenAI client
-SUPER_MIND_API_KEY = os.getenv("SUPER_MIND_API_KEY")
+# Try SUPER_MIND_API_KEY first, then AI_BUILDER_TOKEN (for deployment platform)
+SUPER_MIND_API_KEY = os.getenv("SUPER_MIND_API_KEY") or os.getenv("AI_BUILDER_TOKEN")
 SUPER_MIND_BASE_URL = os.getenv("SUPER_MIND_BASE_URL", "https://space.ai-builders.com/backend/v1")
 
 if not SUPER_MIND_API_KEY:
-    raise ValueError("SUPER_MIND_API_KEY environment variable not set! Please configure it in .env file.")
+    raise ValueError("SUPER_MIND_API_KEY or AI_BUILDER_TOKEN environment variable not set! Please configure it in .env file or deployment config.")
 
 openai_client = OpenAI(
     api_key=SUPER_MIND_API_KEY,

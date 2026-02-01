@@ -11,7 +11,8 @@ def get_mock_coach_advice(
     today_analysis: Dict[str, Any],
     historical_runs: list = [],
     subjective_feeling: str = "",
-    language: str = "Chinese"
+    language: str = "Chinese",
+    historical_running_info: str = ""
 ) -> Dict[str, str]:
     """
     生成模拟的教练建议

@@ -11,6 +11,10 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import json
+import httpx
+import tempfile
+import base64
+from audio_recorder_streamlit import audio_recorder
 
 # Import analyzers
 from tcx_analyzer import analyze_tcx
@@ -130,6 +134,17 @@ TRANSLATIONS = {
         'csv_uploaded': 'CSV 文件已上传！',
         'subjective_feeling': '💭 主观感受',
         'feeling_placeholder': '例如：腿部感觉沉重，感觉很强壮，最后2公里很吃力...',
+        'input_method': '输入方式',
+        'text_input': '文字输入',
+        'voice_input': '语音输入',
+        'record_audio': '录制音频',
+        're_record': '重新录音',
+        'transcribing': '正在转文字...',
+        'transcription_success': '语音已转换为文字',
+        'transcription_error': '语音转文字失败',
+        'historical_running_info': '📝 跑步历史信息',
+        'historical_info_placeholder': '例如：3个月前开始跑步，刚开始很累，跑5分钟就气喘吁吁，现在可以跑30分钟了...',
+        'historical_info_help': '描述您的跑步历史：何时开始跑步、初始状态、进步情况等',
         'analyze_button': '🔍 分析并获取建议',
         'upload_csv_first': '请先上传 CSV 文件！',
         'no_historical_warning': '历史数据未构建。分析将在没有历史上下文的情况下进行。',
@@ -218,6 +233,17 @@ TRANSLATIONS = {
         'csv_uploaded': 'CSV file uploaded!',
         'subjective_feeling': '💭 Subjective Feeling',
         'feeling_placeholder': 'e.g., Legs felt heavy, felt strong, struggled in the last 2km...',
+        'input_method': 'Input Method',
+        'text_input': 'Text Input',
+        'voice_input': 'Voice Input',
+        'record_audio': 'Record Audio',
+        're_record': 'Re-record',
+        'transcribing': 'Transcribing...',
+        'transcription_success': 'Audio transcribed successfully',
+        'transcription_error': 'Transcription failed',
+        'historical_running_info': '📝 Historical Running Info',
+        'historical_info_placeholder': 'e.g., Started running 3 months ago, was very tired at first, could only run 5 minutes, now can run 30 minutes...',
+        'historical_info_help': 'Describe your running history: when you started, initial condition, progress, etc.',
         'analyze_button': '🔍 Analyze & Coach Me',
         'upload_csv_first': 'Please upload a CSV file first!',
         'no_historical_warning': 'Historical data not built. Analysis will proceed without historical context.',
@@ -279,6 +305,97 @@ def t(key: str) -> str:
     """Get translated text."""
     lang = st.session_state.language
     return TRANSLATIONS.get(lang, TRANSLATIONS['English']).get(key, key)
+
+
+def transcribe_audio(audio_file_bytes: bytes, language_hint: str = None, file_extension: str = None) -> Dict[str, Any]:
+    """
+    Transcribe audio file using space.ai-builders.com API.
+    
+    Args:
+        audio_file_bytes: Audio file bytes
+        language_hint: Optional language hint (e.g., 'zh-CN', 'en-US')
+        file_extension: Optional file extension (e.g., 'wav', 'mp3'). If not provided, will try to detect from bytes.
+    
+    Returns:
+        Dictionary with 'text' and 'success' keys
+    """
+    try:
+        url = f"{SUPER_MIND_BASE_URL.replace('/v1', '')}/v1/audio/transcriptions"
+        headers = {
+            "Authorization": f"Bearer {SUPER_MIND_API_KEY}"
+        }
+        
+        # Determine audio format
+        if file_extension:
+            audio_format = file_extension.lower().lstrip('.')
+        else:
+            # Try to detect audio format from magic bytes
+            audio_format = 'wav'  # default for audio_recorder_streamlit
+            if audio_file_bytes.startswith(b'RIFF'):
+                audio_format = 'wav'
+            elif audio_file_bytes.startswith(b'\xff\xfb') or audio_file_bytes.startswith(b'ID3'):
+                audio_format = 'mp3'
+            elif audio_file_bytes.startswith(b'fLaC'):
+                audio_format = 'flac'
+            elif audio_file_bytes.startswith(b'OggS'):
+                audio_format = 'ogg'
+            elif audio_file_bytes.startswith(b'\x00\x00\x00\x20ftyp'):
+                audio_format = 'm4a'
+        
+        # Determine MIME type
+        mime_type_map = {
+            'wav': 'audio/wav',
+            'mp3': 'audio/mpeg',
+            'flac': 'audio/flac',
+            'ogg': 'audio/ogg',
+            'm4a': 'audio/mp4',
+        }
+        mime_type = mime_type_map.get(audio_format, 'audio/wav')
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{audio_format}') as tmp_file:
+            tmp_file.write(audio_file_bytes)
+            tmp_file_path = tmp_file.name
+        
+        try:
+            # Prepare multipart form data
+            files = {
+                'audio_file': (f'audio.{audio_format}', open(tmp_file_path, 'rb'), mime_type)
+            }
+            data = {}
+            if language_hint:
+                data['language'] = language_hint
+            
+            # Make request
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(url, headers=headers, files=files, data=data)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    'success': True,
+                    'text': result.get('text', ''),
+                    'detected_language': result.get('detected_language'),
+                    'confidence': result.get('confidence')
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"API returned status {response.status_code}: {response.text}",
+                    'text': ''
+                }
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(tmp_file_path)
+            except:
+                pass
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'text': ''
+        }
 
 
 def parse_pace_to_seconds(pace_str: str) -> Optional[float]:
@@ -501,7 +618,8 @@ def calculate_days_until_target(target_date_str: str) -> Optional[int]:
 
 
 def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict, 
-                     historical_runs: List[Dict], subjective_feeling: str) -> Dict[str, str]:
+                     historical_runs: List[Dict], subjective_feeling: str,
+                     historical_running_info: str = "") -> Dict[str, str]:
     """Get coaching advice and training plan from LLM."""
     
     # Build context
@@ -641,6 +759,7 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
 {f"- 心脏漂移: {drift_str} (负值表示后半程效率下降，表明疲劳)" if drift_pct is not None else "- 心脏漂移: 未提供"}
 {f"- 配速类型: {run_type}" if run_type != 'Unknown' else "- 配速类型: 未提供"}
 - 主观感受: {subjective_feeling if subjective_feeling else '未提供'}
+{f"- 跑步历史信息: {historical_running_info}" if historical_running_info else ""}
 
 {historical_summary}
 
@@ -685,7 +804,8 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
             today_metrics,
             historical_runs,
             subjective_feeling,
-            response_lang
+            response_lang,
+            historical_running_info
         )
     
     try:
@@ -878,6 +998,102 @@ with st.sidebar:
     # Historical Running Data
     st.subheader(t('historical_data'))
     
+    # Historical Running Info (Text or Voice Input)
+    st.subheader(t('historical_running_info'))
+    historical_info_input_method = st.radio(
+        t('input_method'),
+        [t('text_input'), t('voice_input')],
+        horizontal=True,
+        key='historical_info_input_method'
+    )
+    
+    historical_running_info = ""
+    
+    if historical_info_input_method == t('text_input'):
+        historical_running_info = st.text_area(
+            t('historical_running_info'),
+            placeholder=t('historical_info_placeholder'),
+            help=t('historical_info_help'),
+            height=100,
+            key='historical_running_info_text'
+        )
+    else:
+        # Voice input for historical info - Real-time recording
+        current_lang = st.session_state.language
+        st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
+        
+        # Check if user wants to re-record (clear previous recording)
+        if st.button("🔄 " + t('re_record'), key='clear_historical_recording'):
+            # Clear previous recording and transcription
+            if 'historical_recorder' in st.session_state:
+                del st.session_state.historical_recorder
+            if 'historical_running_info_transcribed' in st.session_state:
+                del st.session_state.historical_running_info_transcribed
+            if 'historical_running_info' in st.session_state:
+                del st.session_state.historical_running_info
+            st.rerun()
+        
+        # Audio recorder component
+        audio_bytes_historical = audio_recorder(
+            text=t('record_audio'),
+            recording_color="#e74c3c",
+            neutral_color="#34495e",
+            icon_name="microphone",
+            icon_size="2x",
+            key='historical_recorder'
+        )
+        
+        if audio_bytes_historical:
+            # Convert base64 to bytes if needed
+            if isinstance(audio_bytes_historical, str):
+                # It's base64 encoded
+                try:
+                    audio_bytes_historical = base64.b64decode(audio_bytes_historical)
+                except:
+                    pass
+            
+            if audio_bytes_historical:
+                # Show audio player
+                st.audio(audio_bytes_historical, format="audio/wav")
+                
+                # Button row for transcribe and re-record
+                col_transcribe, col_rerecord = st.columns([2, 1])
+                
+                with col_transcribe:
+                    # Transcribe button
+                    if st.button("🔄 " + ("转换语音为文字" if current_lang == 'Chinese' else "Transcribe Audio"), key='transcribe_historical', use_container_width=True):
+                        with st.spinner(t('transcribing')):
+                            lang_hint = 'zh-CN' if current_lang == 'Chinese' else 'en-US'
+                            result = transcribe_audio(audio_bytes_historical, lang_hint, file_extension='wav')
+                            if result['success']:
+                                historical_running_info = result['text']
+                                st.success(t('transcription_success'))
+                                historical_running_info = st.text_area(
+                                    t('historical_running_info'),
+                                    value=historical_running_info,
+                                    height=100,
+                                    key='historical_running_info_transcribed'
+                                )
+                                st.session_state.historical_running_info = historical_running_info
+                            else:
+                                st.error(f"{t('transcription_error')}: {result.get('error', 'Unknown error')}")
+                
+                with col_rerecord:
+                    # Re-record button
+                    if st.button("🎤 " + t('re_record'), key='rerecord_historical', use_container_width=True):
+                        # Clear previous recording and transcription
+                        if 'historical_recorder' in st.session_state:
+                            del st.session_state.historical_recorder
+                        if 'historical_running_info_transcribed' in st.session_state:
+                            del st.session_state.historical_running_info_transcribed
+                        if 'historical_running_info' in st.session_state:
+                            del st.session_state.historical_running_info
+                        st.rerun()
+    
+    # Store historical running info in session state
+    if historical_running_info:
+        st.session_state.historical_running_info = historical_running_info
+    
     # Instructions for getting historical data
     with st.expander("📖 " + ("如何获取历史数据" if language == 'Chinese' else "How to Get Historical Data")):
         if language == 'Chinese':
@@ -1015,11 +1231,103 @@ if csv_today_file is not None:
 
 # Subjective feeling
 st.subheader(t('subjective_feeling'))
-subjective_feeling = st.text_area(
-    t('feeling_placeholder'),
-    placeholder=t('feeling_placeholder'),
-    height=100
+subjective_input_method = st.radio(
+    t('input_method'),
+    [t('text_input'), t('voice_input')],
+    horizontal=True,
+    key='subjective_input_method'
 )
+
+subjective_feeling = ""
+
+if subjective_input_method == t('text_input'):
+    subjective_feeling = st.text_area(
+        t('feeling_placeholder'),
+        placeholder=t('feeling_placeholder'),
+        height=100,
+        key='subjective_feeling_text'
+    )
+else:
+    # Voice input for subjective feeling - Real-time recording
+    current_lang = st.session_state.language
+    st.info("🎤 " + ("点击下方按钮开始录音，说话后点击停止录音" if current_lang == 'Chinese' else "Click the button below to start recording, speak, then click to stop"))
+    
+    # Check if user wants to re-record (clear previous recording)
+    if st.button("🔄 " + t('re_record'), key='clear_subjective_recording'):
+        # Clear previous recording and transcription
+        if 'subjective_recorder' in st.session_state:
+            del st.session_state.subjective_recorder
+        if 'subjective_feeling_transcribed' in st.session_state:
+            del st.session_state.subjective_feeling_transcribed
+        if 'subjective_feeling' in st.session_state:
+            del st.session_state.subjective_feeling
+        st.rerun()
+    
+    # Audio recorder component
+    audio_bytes_subjective = audio_recorder(
+        text=t('record_audio'),
+        recording_color="#e74c3c",
+        neutral_color="#34495e",
+        icon_name="microphone",
+        icon_size="2x",
+        key='subjective_recorder'
+    )
+    
+    if audio_bytes_subjective:
+        # Convert base64 to bytes if needed
+        if isinstance(audio_bytes_subjective, str):
+            # It's base64 encoded
+            try:
+                audio_bytes_subjective = base64.b64decode(audio_bytes_subjective)
+            except:
+                pass
+        
+        if audio_bytes_subjective:
+            # Show audio player
+            st.audio(audio_bytes_subjective, format="audio/wav")
+            
+            # Button row for transcribe and re-record
+            col_transcribe, col_rerecord = st.columns([2, 1])
+            
+            with col_transcribe:
+                # Transcribe button
+                if st.button("🔄 " + ("转换语音为文字" if current_lang == 'Chinese' else "Transcribe Audio"), key='transcribe_subjective', use_container_width=True):
+                    with st.spinner(t('transcribing')):
+                        lang_hint = 'zh-CN' if current_lang == 'Chinese' else 'en-US'
+                        result = transcribe_audio(audio_bytes_subjective, lang_hint, file_extension='wav')
+                        if result['success']:
+                            subjective_feeling = result['text']
+                            st.success(t('transcription_success'))
+                            subjective_feeling = st.text_area(
+                                t('subjective_feeling'),
+                                value=subjective_feeling,
+                                height=100,
+                                key='subjective_feeling_transcribed'
+                            )
+                            st.session_state.subjective_feeling = subjective_feeling
+                        else:
+                            st.error(f"{t('transcription_error')}: {result.get('error', 'Unknown error')}")
+            
+            with col_rerecord:
+                # Re-record button
+                if st.button("🎤 " + t('re_record'), key='rerecord_subjective', use_container_width=True):
+                    # Clear previous recording and transcription
+                    if 'subjective_recorder' in st.session_state:
+                        del st.session_state.subjective_recorder
+                    if 'subjective_feeling_transcribed' in st.session_state:
+                        del st.session_state.subjective_feeling_transcribed
+                    if 'subjective_feeling' in st.session_state:
+                        del st.session_state.subjective_feeling
+                    st.rerun()
+    
+    # Store subjective_feeling in session state if available
+    if subjective_feeling:
+        st.session_state.subjective_feeling = subjective_feeling
+    elif 'subjective_feeling_transcribed' in st.session_state:
+        # If user has transcribed text, use it
+        transcribed_text = st.session_state.get('subjective_feeling_transcribed', '')
+        if transcribed_text:
+            st.session_state.subjective_feeling = transcribed_text
 
 # Buttons section
 col1, col2 = st.columns(2)
@@ -1043,12 +1351,17 @@ if get_plan_button:
             'pacing_variance': {}
         }
         
+        # Get subjective_feeling and historical_running_info from session state if available
+        final_subjective_feeling_plan = st.session_state.get('subjective_feeling', "")
+        final_historical_running_info_plan = st.session_state.get('historical_running_info', '')
+        
         coach_response = get_coach_advice(
             st.session_state.user_profile,
             st.session_state.goal,
             empty_today_metrics,
             [],  # No historical runs
-            ""  # No subjective feeling
+            final_subjective_feeling_plan,  # Use from session state if available
+            final_historical_running_info_plan  # Use from session state if available
         )
         
         # Display training plan
@@ -1253,13 +1566,20 @@ if analyze_button_clicked:
         st.stop()
     
     # Get coaching advice
+    # Ensure we get subjective_feeling from session state if available (for voice input)
+    final_subjective_feeling = st.session_state.get('subjective_feeling', subjective_feeling)
+    
+    # Ensure we get historical_running_info from session state if available (for voice input)
+    final_historical_running_info = st.session_state.get('historical_running_info', '')
+    
     with st.spinner(t('getting_advice')):
         coach_response = get_coach_advice(
             st.session_state.user_profile,
             st.session_state.goal,
             today_analysis,
             historical_runs,
-            subjective_feeling
+            final_subjective_feeling,  # Use final value from session state or UI input
+            final_historical_running_info  # Use final value from session state or UI input
         )
     
     # Display immediate advice
