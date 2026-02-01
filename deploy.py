@@ -14,7 +14,7 @@ BASE_URL = "https://space.ai-builders.com/backend"
 API_KEY = os.getenv("SUPER_MIND_API_KEY") or os.getenv("AI_BUILDER_TOKEN")
 
 if not API_KEY:
-    print("❌ Error: SUPER_MIND_API_KEY or AI_BUILDER_TOKEN not found in .env file!")
+    print("[ERROR] SUPER_MIND_API_KEY or AI_BUILDER_TOKEN not found in .env file!")
     print("Please add your API key to .env file:")
     print("SUPER_MIND_API_KEY=your_api_key_here")
     exit(1)
@@ -27,11 +27,11 @@ def load_deploy_config():
             config = json.load(f)
         return config
     except FileNotFoundError:
-        print("❌ Error: deploy-config.json not found!")
+        print("[ERROR] deploy-config.json not found!")
         print("Please create deploy-config.json with your deployment configuration.")
         return None
     except json.JSONDecodeError as e:
-        print(f"❌ Error: Invalid JSON in deploy-config.json: {e}")
+        print(f"[ERROR] Invalid JSON in deploy-config.json: {e}")
         return None
 
 
@@ -56,7 +56,7 @@ def deploy_service(config):
     if "env_vars" in config and config["env_vars"]:
         deploy_request["env_vars"] = config["env_vars"]
     
-    print(f"\n🚀 Deploying {config['service_name']}...")
+    print(f"\n[Deploying] {config['service_name']}...")
     print(f"   Repository: {config['repo_url']}")
     print(f"   Branch: {config['branch']}")
     print(f"   Port: {deploy_request['port']}")
@@ -66,7 +66,7 @@ def deploy_service(config):
         
         if response.status_code == 202:
             data = response.json()
-            print(f"\n✅ Deployment queued successfully!")
+            print(f"\n[SUCCESS] Deployment queued successfully!")
             print(f"   Status: {data.get('status', 'unknown')}")
             print(f"   Service Name: {data.get('service_name', 'unknown')}")
             
@@ -74,21 +74,21 @@ def deploy_service(config):
                 print(f"   Public URL: {data.get('public_url')}")
             
             if data.get('streaming_logs'):
-                print(f"\n📋 Initial Build Logs:")
+                print(f"\n[LOGS] Initial Build Logs:")
                 print("-" * 60)
                 print(data.get('streaming_logs'))
                 print("-" * 60)
             
-            print(f"\n⏳ Deployment Status:")
+            print(f"\n[STATUS] Deployment Status:")
             print(f"   Provisioning typically takes 5-10 minutes.")
             print(f"   Check status with: GET /v1/deployments/{config['service_name']}")
-            print(f"\n💡 Next Steps:")
+            print(f"\n[NEXT STEPS]")
             for action in data.get('suggested_actions', []):
                 print(f"   - {action}")
             
             return True
         else:
-            print(f"\n❌ Deployment failed!")
+            print(f"\n[ERROR] Deployment failed!")
             print(f"   Status Code: {response.status_code}")
             try:
                 error_data = response.json()
@@ -98,7 +98,7 @@ def deploy_service(config):
             return False
             
     except requests.exceptions.RequestException as e:
-        print(f"\n❌ Error connecting to deployment API: {e}")
+        print(f"\n[ERROR] Error connecting to deployment API: {e}")
         return False
 
 
@@ -115,16 +115,16 @@ def check_deployment_status(service_name):
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
-            print(f"\n📊 Deployment Status for {service_name}:")
+            print(f"\n[STATUS] Deployment Status for {service_name}:")
             print(f"   Status: {data.get('status', 'unknown')}")
             print(f"   Public URL: {data.get('public_url', 'Not available yet')}")
             print(f"   Last Deployed: {data.get('last_deployed_at', 'Never')}")
             return data
         else:
-            print(f"❌ Error checking status: {response.status_code}")
+            print(f"[ERROR] Error checking status: {response.status_code}")
             return None
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[ERROR] Error: {e}")
         return None
 
 
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     
     # Validate configuration
     if config.get("repo_url") == "YOUR_GITHUB_REPO_URL_HERE":
-        print("\n❌ Error: Please update deploy-config.json with your GitHub repository URL!")
+        print("\n[ERROR] Please update deploy-config.json with your GitHub repository URL!")
         print("   Edit deploy-config.json and set 'repo_url' to your public GitHub repository.")
         exit(1)
     

@@ -109,6 +109,7 @@ TRANSLATIONS = {
         'other': '其他',
         'the_goal': '🎯 目标',
         'target_pace': '目标配速',
+        'target_distance': '目标距离',
         'target_date': '目标日期',
         'pace_unit': '配速单位',
         'pace_unit_km': '每公里 (min/km)',
@@ -196,6 +197,7 @@ TRANSLATIONS = {
         'other': 'Other',
         'the_goal': '🎯 The Goal',
         'target_pace': 'Target Pace (mm:ss)',
+        'target_distance': 'Target Distance',
         'target_date': 'Target Date',
         'pace_unit': 'Pace Unit',
         'pace_unit_km': 'Per Kilometer (min/km)',
@@ -506,6 +508,7 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
     age = user_profile.get('age', 'Unknown')
     gender = user_profile.get('gender', 'Unknown')
     target_pace = goal.get('target_pace', 'Unknown')
+    target_distance = goal.get('target_distance', None)
     target_date = goal.get('target_date', 'Unknown')
     weekly_hours = goal.get('weekly_hours', 5.0)
     
@@ -576,6 +579,14 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
     pace_unit_label = "min/mi" if pace_unit == 'mile' else "min/km"
     distance_unit = "miles" if pace_unit == 'mile' else "km"
     
+    # Convert target distance for display
+    target_distance_display = target_distance
+    if target_distance is not None:
+        if pace_unit == 'mile':
+            target_distance_display = target_distance / 1.60934
+        else:
+            target_distance_display = target_distance
+    
     # Convert distance for display
     if pace_unit == 'mile':
         distance_display = distance / 1.60934
@@ -618,6 +629,7 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
 
 **训练目标：**
 - 目标配速: {target_pace_display} {pace_unit_label}
+{f"- 目标距离: {target_distance_display:.2f} {distance_unit}" if target_distance is not None else "- 目标距离: 未指定"}
 - 目标日期: {target_date} ({days_str})
 - 剩余时间: {weeks_str}
 - 配速单位: {pace_unit_label}
@@ -642,7 +654,7 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
    - 使用 {pace_unit_label} 作为配速单位
 
 2. **training_plan**: 详细的周训练计划
-   - 创建一个全面的计划，在目标日期前达到目标配速
+   - 创建一个全面的计划，在目标日期前达到目标配速{f"和目标距离 {target_distance_display:.2f} {distance_unit}" if target_distance is not None else ""}
    - 考虑：每周可用 {weekly_hours} 小时
    - 包括：轻松跑、节奏跑、间歇跑、长距离跑、休息日
    - 为每种训练类型指定配速区间和心率区间
@@ -820,6 +832,16 @@ with st.sidebar:
         value=st.session_state.goal.get('target_pace', "5:00"), 
         help=pace_help
     )
+    distance_unit_label = "km" if pace_unit == 'km' else "miles"
+    distance_help = f"目标跑步距离（{distance_unit_label}）" if language == 'Chinese' else f"Target running distance ({distance_unit_label})"
+    target_distance = st.number_input(
+        t('target_distance') + f" ({distance_unit_label})",
+        min_value=0.0,
+        max_value=1000.0,
+        value=st.session_state.goal.get('target_distance', 10.0),
+        step=0.1,
+        help=distance_help
+    )
     target_date = st.text_input(
         t('target_date'), 
         value=st.session_state.goal.get('target_date', "In 3 months"), 
@@ -839,6 +861,7 @@ with st.sidebar:
     
     st.session_state.goal = {
         'target_pace': target_pace,
+        'target_distance': target_distance,
         'target_date': target_date,
         'weekly_hours': weekly_hours,
         'pace_unit': pace_unit
