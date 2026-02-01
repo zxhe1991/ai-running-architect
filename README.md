@@ -5,7 +5,7 @@ A comprehensive Streamlit application that provides personalized running coachin
 ## Features
 
 - **Historical Data Analysis**: Upload and index your Garmin running CSV data for semantic search
-- **Current Run Analysis**: Upload TCX files to analyze today's run with advanced metrics:
+- **Current Run Analysis**: Upload csv file to analyze today's run with advanced metrics:
   - Cardiac Drift (efficiency drop analysis)
   - Pacing Variance (run type classification)
   - Cadence, Vertical Oscillation, Stride Length metrics
