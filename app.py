@@ -88,6 +88,13 @@ if 'pace_unit' not in st.session_state:
 if 'language' not in st.session_state:
     st.session_state.language = persisted_config.get('language', 'Chinese')
 
+# Track if files were uploaded in this session (not from previous sessions)
+if 'today_data_uploaded_this_session' not in st.session_state:
+    st.session_state.today_data_uploaded_this_session = False
+
+if 'historical_data_uploaded_this_session' not in st.session_state:
+    st.session_state.historical_data_uploaded_this_session = False
+
 # Language translations
 TRANSLATIONS = {
     'Chinese': {
@@ -887,11 +894,15 @@ with st.sidebar:
             f.write(csv_file.getbuffer())
         st.success(t('file_uploaded'))
         st.info("💡 " + ("历史数据已上传。将在点击'分析并获取建议'时自动构建索引。" if language == 'Chinese' else "Historical data uploaded. Index will be built automatically when you click 'Analyze & Coach Me'."))
+        # Mark that historical data was uploaded in this session
+        st.session_state.historical_data_uploaded_this_session = True
+        # Reset knowledge_base_built since we have new data
+        st.session_state.knowledge_base_built = False
     
-    # Only show historical data status if user has explicitly built index
-    # Don't show default/pre-existing index files - only show if user built it
-    if st.session_state.knowledge_base_built:
-        # User has built index from their uploaded CSV
+    # Only show historical data status if user has uploaded data in THIS session and built index
+    # Don't show default/pre-existing index files - only show if user uploaded and built it in this session
+    if st.session_state.get('historical_data_uploaded_this_session', False) and st.session_state.knowledge_base_built:
+        # User has uploaded CSV in this session and built index
         if os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl"):
             st.success(t('index_ready'))
             # Show how many runs are indexed
@@ -901,32 +912,43 @@ with st.sidebar:
                     st.info(f"已索引 {len(df)} 次跑步记录" if language == 'Chinese' else f"Indexed {len(df)} runs")
             except:
                 pass
-    elif csv_file is not None:
-        # User just uploaded CSV but index not built yet
+    elif st.session_state.get('historical_data_uploaded_this_session', False):
+        # User uploaded CSV in this session but index not built yet
         st.info("💡 " + ("历史数据已上传。将在点击'分析并获取建议'时自动构建索引。" if language == 'Chinese' else "Historical data uploaded. Index will be built automatically when you click 'Analyze & Coach Me'."))
-    elif os.path.exists("Garmin_Runing.csv"):
-        # CSV file exists but index not built yet
-        st.info("💡 " + ("已检测到历史数据文件。点击'分析并获取建议'按钮将自动构建索引" if language == 'Chinese' else "Historical data file detected. Click 'Analyze & Coach Me' button to build index automatically"))
     else:
-        # No CSV file uploaded
+        # No CSV file uploaded in this session
         st.info("💡 " + ("上传 Garmin_Runing.csv 文件以构建历史数据索引" if language == 'Chinese' else "Upload Garmin_Runing.csv file to build historical data index"))
 
 
 # Main UI
-st.title(t('app_title'))
-st.markdown(f"### {t('app_subtitle')}")
+# Top right corner - App note
+col_title, col_note = st.columns([3, 1])
+with col_title:
+    st.title(t('app_title'))
+    st.markdown(f"### {t('app_subtitle')}")
+with col_note:
+    st.markdown("<div style='text-align: right; padding-top: 20px;'>", unsafe_allow_html=True)
+    st.info("ℹ️ " + ("本应用目前仅支持 Garmin 跑步数据分析" if language == 'Chinese' else "This app currently supports Garmin Running Data only"))
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# Author and app note
-st.markdown("---")
-st.markdown("**Built by River**")
-st.info("ℹ️ " + ("本应用目前仅支持 Garmin 跑步数据分析" if language == 'Chinese' else "This app currently supports Garmin Running Data only"))
-st.markdown("---")
-
-# Author and app note
-st.markdown("---")
-st.markdown("**Built by River**")
-st.info("ℹ️ " + ("本应用目前仅支持 Garmin 跑步数据分析" if language == 'Chinese' else "This app currently supports Garmin Running Data only"))
-st.markdown("---")
+# Bottom right corner - Author (using CSS for fixed positioning)
+st.markdown("""
+<style>
+.footer-author {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    z-index: 999;
+    color: #666;
+    font-size: 16px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 5px 10px;
+    border-radius: 5px;
+}
+</style>
+<div class="footer-author">Built by River</div>
+""", unsafe_allow_html=True)
 
 # File uploader for CSV (Today's Run)
 st.subheader(t('todays_run'))
@@ -965,6 +987,8 @@ if csv_today_file is not None:
     with open("Running_Today.csv", "wb") as f:
         f.write(csv_today_file.getbuffer())
     st.success(t('csv_uploaded'))
+    # Mark that today's data was uploaded in this session
+    st.session_state.today_data_uploaded_this_session = True
 
 # Subjective feeling
 st.subheader(t('subjective_feeling'))
@@ -1022,14 +1046,17 @@ if get_plan_button:
 
 # Handle "Analyze & Coach Me" button
 if analyze_button_clicked:
-    # Check if today's data exists, but don't stop if it doesn't
-    has_today_data = os.path.exists("Running_Today.csv")
+    # Check if today's data was uploaded in THIS session (not from previous sessions)
+    has_today_data = st.session_state.get('today_data_uploaded_this_session', False) and os.path.exists("Running_Today.csv")
     
     if not has_today_data:
         st.info("ℹ️ " + ("未上传今日数据。将基于您的目标和用户资料提供建议。" if language == 'Chinese' else "No today's data uploaded. Will provide advice based on your goals and profile."))
     
-    # Build historical index if CSV file exists but index is not built
-    if os.path.exists("Garmin_Runing.csv") and not st.session_state.knowledge_base_built:
+    # Build historical index ONLY if CSV file was uploaded in THIS session AND index is not built
+    # IMPORTANT: Only use historical data if user explicitly uploaded it in this session
+    has_historical_csv = st.session_state.get('historical_data_uploaded_this_session', False) and os.path.exists("Garmin_Runing.csv")
+    
+    if has_historical_csv and not st.session_state.knowledge_base_built:
         with st.spinner("正在构建历史数据索引..." if language == 'Chinese' else "Building historical data index..."):
             success, result = build_knowledge_base("Garmin_Runing.csv")
             if success:
@@ -1039,8 +1066,13 @@ if analyze_button_clicked:
                 st.warning(t('index_error').format(error=result))
                 st.info("将继续分析，但不会使用历史数据上下文。" if language == 'Chinese' else "Will continue analysis without historical data context.")
     
-    if not st.session_state.knowledge_base_built:
-        st.info("ℹ️ " + ("未检测到历史数据。将基于您的目标和用户资料提供建议。" if language == 'Chinese' else "No historical data detected. Will provide advice based on your goals and profile."))
+    # If no historical CSV uploaded in this session, explicitly set knowledge_base_built to False
+    # This ensures we don't use old/pre-existing historical data files
+    if not has_historical_csv:
+        st.session_state.knowledge_base_built = False
+        st.info("ℹ️ " + ("未上传历史数据。将仅基于今日数据和您的目标提供建议。" if language == 'Chinese' else "No historical data uploaded. Will provide advice based on today's data and your goals only."))
+    elif not st.session_state.knowledge_base_built:
+        st.info("ℹ️ " + ("历史数据索引未构建。将仅基于今日数据和您的目标提供建议。" if language == 'Chinese' else "Historical data index not built. Will provide advice based on today's data and your goals only."))
     
     # Analyze CSV file (Today's run) - only if file exists
     today_analysis = {}
@@ -1144,9 +1176,16 @@ if analyze_button_clicked:
             )
     
     # Search similar runs (used internally for AI analysis, not displayed)
-    # Only search if we have today's data and historical index
+    # IMPORTANT: Only use historical data if:
+    # 1. User has today's data
+    # 2. User explicitly uploaded historical CSV in THIS session (not from previous sessions)
+    # 3. Historical index files exist
     historical_runs = []
-    if has_today_data and st.session_state.knowledge_base_built:
+    
+    # Check if user uploaded historical CSV in THIS session (not from previous sessions)
+    has_historical_csv = st.session_state.get('historical_data_uploaded_this_session', False) and os.path.exists("Garmin_Runing.csv")
+    
+    if has_today_data and has_historical_csv and st.session_state.knowledge_base_built:
         # Double-check that files actually exist before searching
         if not (os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl")):
             st.warning("⚠️ 历史数据索引文件不存在，请重新构建索引。" if language == 'Chinese' else "⚠️ Historical data index files not found. Please rebuild index.")
@@ -1174,8 +1213,21 @@ if analyze_button_clicked:
             except Exception as search_error:
                 # Silently fail - historical context is optional
                 historical_runs = []
+    else:
+        # Explicitly set to empty if no historical data uploaded in this session
+        historical_runs = []
     
     # Historical context is used internally for AI analysis but not displayed to user
+    
+    # Check if we have meaningful data to analyze BEFORE calling API
+    has_meaningful_data = (
+        (has_today_data and distance_km > 0)  # Has today's run data with distance
+        or (st.session_state.user_profile.get('age') and st.session_state.goal.get('target_pace'))  # Has user profile and goal
+    )
+    
+    if not has_meaningful_data:
+        st.warning("⚠️ " + ("请至少上传今日数据或填写用户资料和目标，才能进行分析。" if language == 'Chinese' else "Please upload today's data or fill in user profile and goals to proceed with analysis."))
+        st.stop()
     
     # Get coaching advice
     with st.spinner(t('getting_advice')):
@@ -1240,147 +1292,176 @@ if analyze_button_clicked:
                         basic_stats.get('avg_pace', 'N/A') if basic_stats else "N/A"
                     ]
                 }
-            metrics_df = pd.DataFrame(metrics_data)
-            metrics_df.to_excel(writer, sheet_name='Key Metrics' if language == 'English' else '关键指标', index=False)
-            
-            # Sheet 2: Detailed Analysis
-            detailed_data = []
-            
-            # Cardiac Drift
-            drift_data = today_analysis.get('cardiac_drift', {})
-            if drift_data.get('drift_percentage') is not None:
+                metrics_df = pd.DataFrame(metrics_data)
+                metrics_df.to_excel(writer, sheet_name='Key Metrics' if language == 'English' else '关键指标', index=False)
+                
+                # Sheet 2: Detailed Analysis
+                detailed_data = []
+                
+                # Cardiac Drift
+                drift_data = today_analysis.get('cardiac_drift', {})
+                if drift_data.get('drift_percentage') is not None:
+                    detailed_data.append({
+                        ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
+                        ('Metric' if language == 'English' else '指标'): 'First Half Efficiency' if language == 'English' else '前半段效率',
+                        ('Value' if language == 'English' else '值'): f"{drift_data.get('first_half_efficiency', 0):.4f}"
+                    })
+                    detailed_data.append({
+                        ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
+                        ('Metric' if language == 'English' else '指标'): 'Second Half Efficiency' if language == 'English' else '后半段效率',
+                        ('Value' if language == 'English' else '值'): f"{drift_data.get('second_half_efficiency', 0):.4f}"
+                    })
+                    detailed_data.append({
+                        ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
+                        ('Metric' if language == 'English' else '指标'): 'Drift Percentage' if language == 'English' else '漂移百分比',
+                        ('Value' if language == 'English' else '值'): f"{drift_data.get('drift_percentage', 0):.2f}%"
+                    })
+                
+                # Pacing Variance
+                pacing_data = today_analysis.get('pacing_variance', {})
+                run_type = pacing_data.get('run_type', 'Unknown')
+                # Translate run_type
+                run_type_translated = {
+                    'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+                    'Consistent': '稳定配速' if language == 'Chinese' else 'Consistent',
+                    'Steady Run': '稳定跑' if language == 'Chinese' else 'Steady Run',
+                    'Intervals/Erratic': '间歇/不稳定' if language == 'Chinese' else 'Intervals/Erratic',
+                    'Moderate Variation': '中等变化' if language == 'Chinese' else 'Moderate Variation',
+                    'Negative Split': '负分段' if language == 'Chinese' else 'Negative Split',
+                    'Positive Split': '正分段' if language == 'Chinese' else 'Positive Split',
+                    'Variable': '变化配速' if language == 'Chinese' else 'Variable'
+                }.get(run_type, run_type)
                 detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
-                    ('Metric' if language == 'English' else '指标'): 'First Half Efficiency' if language == 'English' else '前半段效率',
-                    ('Value' if language == 'English' else '值'): f"{drift_data.get('first_half_efficiency', 0):.4f}"
+                    ('Category' if language == 'English' else '类别'): 'Pacing' if language == 'English' else '配速',
+                    ('Metric' if language == 'English' else '指标'): 'Run Type' if language == 'English' else '跑步类型',
+                    ('Value' if language == 'English' else '值'): run_type_translated
                 })
                 detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
-                    ('Metric' if language == 'English' else '指标'): 'Second Half Efficiency' if language == 'English' else '后半段效率',
-                    ('Value' if language == 'English' else '值'): f"{drift_data.get('second_half_efficiency', 0):.4f}"
+                    ('Category' if language == 'English' else '类别'): 'Pacing' if language == 'English' else '配速',
+                    ('Metric' if language == 'English' else '指标'): 'Speed Variation' if language == 'English' else '速度变化',
+                    ('Value' if language == 'English' else '值'): f"{pacing_data.get('coefficient_of_variation', 0):.3f}"
                 })
-                detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Cardiac Drift' if language == 'English' else '心率漂移',
-                    ('Metric' if language == 'English' else '指标'): 'Drift Percentage' if language == 'English' else '漂移百分比',
-                    ('Value' if language == 'English' else '值'): f"{drift_data.get('drift_percentage', 0):.2f}%"
-                })
-            
-            # Pacing Variance
-            pacing_data = today_analysis.get('pacing_variance', {})
-            detailed_data.append({
-                ('Category' if language == 'English' else '类别'): 'Pacing' if language == 'English' else '配速',
-                ('Metric' if language == 'English' else '指标'): 'Run Type' if language == 'English' else '跑步类型',
-                ('Value' if language == 'English' else '值'): pacing_data.get('run_type', 'Unknown')
-            })
-            detailed_data.append({
-                ('Category' if language == 'English' else '类别'): 'Pacing' if language == 'English' else '配速',
-                ('Metric' if language == 'English' else '指标'): 'Speed Variation' if language == 'English' else '速度变化',
-                ('Value' if language == 'English' else '值'): f"{pacing_data.get('coefficient_of_variation', 0):.3f}"
-            })
-            
-            # Cadence
-            cadence_data = today_analysis.get('cadence_metrics', {})
-            if cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence'):
-                avg_cadence = cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence')
-                detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Cadence' if language == 'English' else '步频',
-                    ('Metric' if language == 'English' else '指标'): 'Average Cadence' if language == 'English' else '平均步频',
-                    ('Value' if language == 'English' else '值'): f"{avg_cadence} spm"
-                })
-                detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Cadence' if language == 'English' else '步频',
-                    ('Metric' if language == 'English' else '指标'): 'Consistency' if language == 'English' else '一致性',
-                    ('Value' if language == 'English' else '值'): cadence_data.get('cadence_consistency', 'Unknown')
-                })
-            
-            # Vertical Oscillation
-            vo_data = today_analysis.get('vertical_oscillation_metrics', {})
-            if vo_data.get('avg_vertical_oscillation_cm') is not None:
-                detailed_data.append({
-                    ('Category' if language == 'English' else '类别'): 'Vertical Oscillation' if language == 'English' else '垂直振幅',
-                    ('Metric' if language == 'English' else '指标'): 'Average' if language == 'English' else '平均值',
-                    ('Value' if language == 'English' else '值'): f"{vo_data.get('avg_vertical_oscillation_cm')} cm"
-                })
-                if vo_data.get('max_vertical_oscillation_cm') is not None:
+                
+                # Cadence
+                cadence_data = today_analysis.get('cadence_metrics', {})
+                if cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence'):
+                    avg_cadence = cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence')
+                    detailed_data.append({
+                        ('Category' if language == 'English' else '类别'): 'Cadence' if language == 'English' else '步频',
+                        ('Metric' if language == 'English' else '指标'): 'Average Cadence' if language == 'English' else '平均步频',
+                        ('Value' if language == 'English' else '值'): f"{avg_cadence} spm"
+                    })
+                    consistency = cadence_data.get('cadence_consistency', 'Unknown')
+                    # Translate consistency
+                    consistency_translated = {
+                        'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+                        'Consistent': '一致' if language == 'Chinese' else 'Consistent',
+                        'Very Consistent': '非常一致' if language == 'Chinese' else 'Very Consistent',
+                        'Variable': '变化' if language == 'Chinese' else 'Variable'
+                    }.get(consistency, consistency)
+                    detailed_data.append({
+                        ('Category' if language == 'English' else '类别'): 'Cadence' if language == 'English' else '步频',
+                        ('Metric' if language == 'English' else '指标'): 'Consistency' if language == 'English' else '一致性',
+                        ('Value' if language == 'English' else '值'): consistency_translated
+                    })
+                
+                # Vertical Oscillation
+                vo_data = today_analysis.get('vertical_oscillation_metrics', {})
+                if vo_data.get('avg_vertical_oscillation_cm') is not None:
                     detailed_data.append({
                         ('Category' if language == 'English' else '类别'): 'Vertical Oscillation' if language == 'English' else '垂直振幅',
-                        ('Metric' if language == 'English' else '指标'): 'Maximum' if language == 'English' else '最大值',
-                        ('Value' if language == 'English' else '值'): f"{vo_data.get('max_vertical_oscillation_cm')} cm"
+                        ('Metric' if language == 'English' else '指标'): 'Average' if language == 'English' else '平均值',
+                        ('Value' if language == 'English' else '值'): f"{vo_data.get('avg_vertical_oscillation_cm')} cm"
                     })
-                if vo_data.get('assessment'):
-                    detailed_data.append({
-                        ('Category' if language == 'English' else '类别'): 'Vertical Oscillation' if language == 'English' else '垂直振幅',
-                        ('Metric' if language == 'English' else '指标'): 'Assessment' if language == 'English' else '评估',
-                        ('Value' if language == 'English' else '值'): vo_data.get('assessment', 'Unknown')
+                    if vo_data.get('max_vertical_oscillation_cm') is not None:
+                        detailed_data.append({
+                            ('Category' if language == 'English' else '类别'): 'Vertical Oscillation' if language == 'English' else '垂直振幅',
+                            ('Metric' if language == 'English' else '指标'): 'Maximum' if language == 'English' else '最大值',
+                            ('Value' if language == 'English' else '值'): f"{vo_data.get('max_vertical_oscillation_cm')} cm"
+                        })
+                    if vo_data.get('assessment'):
+                        assessment = vo_data.get('assessment', 'Unknown')
+                        # Translate assessment
+                        assessment_translated = {
+                            'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+                            'Good': '良好' if language == 'Chinese' else 'Good',
+                            'Fair': '一般' if language == 'Chinese' else 'Fair',
+                            'Moderate': '中等' if language == 'Chinese' else 'Moderate',
+                            'Poor': '较差' if language == 'Chinese' else 'Poor'
+                        }.get(assessment, assessment)
+                        detailed_data.append({
+                            ('Category' if language == 'English' else '类别'): 'Vertical Oscillation' if language == 'English' else '垂直振幅',
+                            ('Metric' if language == 'English' else '指标'): 'Assessment' if language == 'English' else '评估',
+                            ('Value' if language == 'English' else '值'): assessment_translated
+                        })
+                
+                if detailed_data:
+                    detailed_df = pd.DataFrame(detailed_data)
+                    detailed_df.to_excel(writer, sheet_name='Detailed Analysis' if language == 'English' else '详细分析', index=False)
+                else:
+                    # Create empty sheet if no detailed data
+                    empty_df = pd.DataFrame({('Category' if language == 'English' else '类别'): [], ('Metric' if language == 'English' else '指标'): [], ('Value' if language == 'English' else '值'): []})
+                    empty_df.to_excel(writer, sheet_name='Detailed Analysis' if language == 'English' else '详细分析', index=False)
+                
+                # Sheet 3: Immediate Assessment & Next Workout
+                immediate_advice = coach_response.get('immediate_advice', '')
+                if immediate_advice:
+                    # Split content by newlines and create rows
+                    lines = immediate_advice.split('\n')
+                    immediate_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
                     })
+                else:
+                    immediate_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
+                    })
+                immediate_df.to_excel(writer, sheet_name='Immediate Assessment' if language == 'English' else '即时评估与下次训练', index=False)
+                
+                # Sheet 4: Detailed Training Plan
+                training_plan = coach_response.get('training_plan', '')
+                if training_plan:
+                    # Split content by newlines and create rows
+                    lines = training_plan.split('\n')
+                    training_plan_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
+                    })
+                else:
+                    training_plan_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
+                    })
+                training_plan_df.to_excel(writer, sheet_name='Training Plan' if language == 'English' else '详细训练计划', index=False)
+                
+                # Sheet 5: Training Strategy & Rationale
+                strategy = coach_response.get('strategy', '')
+                if strategy:
+                    # Split content by newlines and create rows
+                    lines = strategy.split('\n')
+                    strategy_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
+                    })
+                else:
+                    strategy_df = pd.DataFrame({
+                        ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
+                    })
+                strategy_df.to_excel(writer, sheet_name='Training Strategy' if language == 'English' else '训练策略与原理', index=False)
             
-            if detailed_data:
-                detailed_df = pd.DataFrame(detailed_data)
-                detailed_df.to_excel(writer, sheet_name='Detailed Analysis' if language == 'English' else '详细分析', index=False)
-            else:
-                # Create empty sheet if no detailed data
-                empty_df = pd.DataFrame({('Category' if language == 'English' else '类别'): [], ('Metric' if language == 'English' else '指标'): [], ('Value' if language == 'English' else '值'): []})
-                empty_df.to_excel(writer, sheet_name='Detailed Analysis' if language == 'English' else '详细分析', index=False)
+            excel_bytes = buffer.getvalue()
+            buffer.close()
             
-            # Sheet 3: Immediate Assessment & Next Workout
-            immediate_advice = coach_response.get('immediate_advice', '')
-            if immediate_advice:
-                # Split content by newlines and create rows
-                lines = immediate_advice.split('\n')
-                immediate_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
-                })
-            else:
-                immediate_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
-                })
-            immediate_df.to_excel(writer, sheet_name='Immediate Assessment' if language == 'English' else '即时评估与下次训练', index=False)
-            
-            # Sheet 4: Detailed Training Plan
-            training_plan = coach_response.get('training_plan', '')
-            if training_plan:
-                # Split content by newlines and create rows
-                lines = training_plan.split('\n')
-                training_plan_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
-                })
-            else:
-                training_plan_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
-                })
-            training_plan_df.to_excel(writer, sheet_name='Training Plan' if language == 'English' else '详细训练计划', index=False)
-            
-            # Sheet 5: Training Strategy & Rationale
-            strategy = coach_response.get('strategy', '')
-            if strategy:
-                # Split content by newlines and create rows
-                lines = strategy.split('\n')
-                strategy_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): [line.strip() for line in lines if line.strip()]
-                })
-            else:
-                strategy_df = pd.DataFrame({
-                    ('Content' if language == 'English' else '内容'): ['No data available' if language == 'English' else '暂无数据']
-                })
-            strategy_df.to_excel(writer, sheet_name='Training Strategy' if language == 'English' else '训练策略与原理', index=False)
-        
-        excel_bytes = buffer.getvalue()
-        buffer.close()
-        
-        st.download_button(
-            label="📥 " + ("下载所有分析结果 (Excel)" if language == 'Chinese' else "Download All Results (Excel)"),
-            data=excel_bytes,
-            file_name=f"running_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    except ImportError:
-        st.error("Excel export requires openpyxl library." if language == 'English' else "Excel导出需要openpyxl库。")
-        st.info("Please run: `pip install openpyxl` in your terminal, then restart the app." if language == 'English' else "请在终端运行: `pip install openpyxl`，然后重启应用。")
-    except Exception as e:
-        st.error(f"Error generating Excel: {e}" if language == 'English' else f"生成Excel时出错: {e}")
-        import traceback
-        st.error(traceback.format_exc())
+            st.download_button(
+                label="📥 " + ("下载所有分析结果 (Excel)" if language == 'Chinese' else "Download All Results (Excel)"),
+                data=excel_bytes,
+                file_name=f"running_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        except ImportError:
+            st.error("Excel export requires openpyxl library." if language == 'English' else "Excel导出需要openpyxl库。")
+            st.info("Please run: `pip install openpyxl` in your terminal, then restart the app." if language == 'English' else "请在终端运行: `pip install openpyxl`，然后重启应用。")
+        except Exception as e:
+            st.error(f"Error generating Excel: {e}" if language == 'English' else f"生成Excel时出错: {e}")
+            import traceback
+            st.error(traceback.format_exc())
     
     # Additional metrics - use translated labels
     with st.expander(t('detailed_analysis')):
@@ -1397,7 +1478,19 @@ if analyze_button_clicked:
         
         st.subheader(t('pacing_analysis'))
         pacing_data = today_analysis.get('pacing_variance', {})
-        st.write(f"**{t('run_type')}:** {pacing_data.get('run_type', 'Unknown')}")
+        run_type = pacing_data.get('run_type', 'Unknown')
+        # Translate run_type
+        run_type_translated = {
+            'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+            'Consistent': '稳定配速' if language == 'Chinese' else 'Consistent',
+            'Steady Run': '稳定跑' if language == 'Chinese' else 'Steady Run',
+            'Intervals/Erratic': '间歇/不稳定' if language == 'Chinese' else 'Intervals/Erratic',
+            'Moderate Variation': '中等变化' if language == 'Chinese' else 'Moderate Variation',
+            'Negative Split': '负分段' if language == 'Chinese' else 'Negative Split',
+            'Positive Split': '正分段' if language == 'Chinese' else 'Positive Split',
+            'Variable': '变化配速' if language == 'Chinese' else 'Variable'
+        }.get(run_type, run_type)
+        st.write(f"**{t('run_type')}:** {run_type_translated}")
         st.write(f"**{t('speed_variation')}:** {pacing_data.get('coefficient_of_variation', 0):.3f}")
         
         st.subheader(t('cadence_metrics'))
@@ -1405,15 +1498,32 @@ if analyze_button_clicked:
         if cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence'):
             avg_cadence = cadence_data.get('avg_cadence_spm') or cadence_data.get('avg_cadence')
             st.write(f"**{t('avg_cadence')}:** {avg_cadence} spm")
-            st.write(f"**{t('consistency')}:** {cadence_data.get('cadence_consistency', 'Unknown')}")
+            consistency = cadence_data.get('cadence_consistency', 'Unknown')
+            # Translate consistency
+            consistency_translated = {
+                'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+                'Consistent': '一致' if language == 'Chinese' else 'Consistent',
+                'Very Consistent': '非常一致' if language == 'Chinese' else 'Very Consistent',
+                'Variable': '变化' if language == 'Chinese' else 'Variable'
+            }.get(consistency, consistency)
+            st.write(f"**{t('consistency')}:** {consistency_translated}")
         
         st.subheader(t('vertical_oscillation'))
         vo_data = today_analysis.get('vertical_oscillation_metrics', {})
         if vo_data.get('avg_vertical_oscillation_cm') is not None:
             st.write(f"**{t('average')}:** {vo_data.get('avg_vertical_oscillation_cm')} cm")
             if vo_data.get('max_vertical_oscillation_cm') is not None:
-                st.write(f"**最大垂直振幅:** {vo_data.get('max_vertical_oscillation_cm')} cm" if language == 'Chinese' else f"**Max:** {vo_data.get('max_vertical_oscillation_cm')} cm")
+                st.write(f"**{t('maximum')}:** {vo_data.get('max_vertical_oscillation_cm')} cm")
             if vo_data.get('assessment'):
-                st.write(f"**{t('assessment')}:** {vo_data.get('assessment', 'Unknown')}")
+                assessment = vo_data.get('assessment', 'Unknown')
+                # Translate assessment
+                assessment_translated = {
+                    'Unknown': '未知' if language == 'Chinese' else 'Unknown',
+                    'Good': '良好' if language == 'Chinese' else 'Good',
+                    'Fair': '一般' if language == 'Chinese' else 'Fair',
+                    'Moderate': '中等' if language == 'Chinese' else 'Moderate',
+                    'Poor': '较差' if language == 'Chinese' else 'Poor'
+                }.get(assessment, assessment)
+                st.write(f"**{t('assessment')}:** {assessment_translated}")
         else:
             st.info("无垂直振幅数据" if language == 'Chinese' else "No vertical oscillation data available")
