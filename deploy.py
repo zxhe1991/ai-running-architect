@@ -76,7 +76,13 @@ def deploy_service(config):
             if data.get('streaming_logs'):
                 print(f"\n[LOGS] Initial Build Logs:")
                 print("-" * 60)
-                print(data.get('streaming_logs'))
+                logs = data.get('streaming_logs', '')
+        if logs:
+            try:
+                print(logs)
+            except UnicodeEncodeError:
+                # Handle encoding issues on Windows
+                print(logs.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore'))
                 print("-" * 60)
             
             print(f"\n[STATUS] Deployment Status:")
