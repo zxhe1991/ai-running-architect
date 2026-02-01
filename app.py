@@ -507,12 +507,13 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
     days_str = f"{days_until} days from now" if days_until else "Unknown"
     weeks_until = days_until / 7.0 if days_until else None
     
-    # Today's metrics
-    drift_pct = today_metrics.get('cardiac_drift', {}).get('drift_percentage')
-    avg_hr = today_metrics.get('basic_stats', {}).get('avg_heart_rate')
-    avg_pace = today_metrics.get('basic_stats', {}).get('avg_pace')
-    distance = today_metrics.get('basic_stats', {}).get('total_distance_km')
-    run_type = today_metrics.get('pacing_variance', {}).get('run_type', 'Unknown')
+    # Today's metrics (may be empty if no today's data)
+    basic_stats = today_metrics.get('basic_stats', {})
+    drift_pct = today_metrics.get('cardiac_drift', {}).get('drift_percentage') if today_metrics.get('cardiac_drift') else None
+    avg_hr = basic_stats.get('avg_heart_rate') if basic_stats else None
+    avg_pace = basic_stats.get('avg_pace') if basic_stats else None
+    distance = basic_stats.get('total_distance_km', 0) if basic_stats else 0
+    run_type = today_metrics.get('pacing_variance', {}).get('run_type', 'Unknown') if today_metrics.get('pacing_variance') else 'Unknown'
     
     # Parse current pace to compare with target
     current_pace_seconds = parse_pace_to_seconds(avg_pace) if avg_pace else None
@@ -615,11 +616,11 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
 - 配速单位: {pace_unit_label}
 
 **今日跑步分析：**
-- 距离: {distance_display:.2f} {distance_unit}
-- 平均配速: {avg_pace_display} {pace_unit_label} {pace_gap_str}
-- 平均心率: {avg_hr} bpm
-- 心脏漂移: {drift_str} (负值表示后半程效率下降，表明疲劳)
-- 配速类型: {run_type}
+{f"- 距离: {distance_display:.2f} {distance_unit}" if distance > 0 else "- 今日数据: 未提供"}
+{f"- 平均配速: {avg_pace_display} {pace_unit_label} {pace_gap_str}" if avg_pace else "- 平均配速: 未提供"}
+{f"- 平均心率: {avg_hr} bpm" if avg_hr else "- 平均心率: 未提供"}
+{f"- 心脏漂移: {drift_str} (负值表示后半程效率下降，表明疲劳)" if drift_pct is not None else "- 心脏漂移: 未提供"}
+{f"- 配速类型: {run_type}" if run_type != 'Unknown' else "- 配速类型: 未提供"}
 - 主观感受: {subjective_feeling if subjective_feeling else '未提供'}
 
 {historical_summary}
@@ -627,8 +628,8 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
 **你的任务 - 以 JSON 格式提供三个独立的回复（全部使用中文）：**
 
 1. **immediate_advice**: 即时评估和下次训练建议
-   - 评估用户是否按计划达成目标
-   - 分析心脏漂移和主观感受
+   {"   - 评估用户是否按计划达成目标" if distance > 0 else "   - 基于用户目标和资料提供建议"}
+   {"   - 分析心脏漂移和主观感受" if drift_pct is not None else "   - 考虑主观感受（如果提供）"}
    - 推荐下一次训练（何时：具体日期，什么：类型、时长、配速/心率目标）
    - 是否需要休息？如果需要，休息几天？
    - 使用 {pace_unit_label} 作为配速单位
@@ -688,17 +689,20 @@ def get_coach_advice(user_profile: Dict, goal: Dict, today_metrics: Dict,
             
             # Check if response is empty
             if not response_text or len(response_text.strip()) == 0:
-                # If empty, try to extract from usage or return error
+                # If empty, fallback to mock response
                 usage = completion.usage
-                error_msg = f"API 返回了空响应（使用了 {usage.completion_tokens} tokens）。这可能是 API 端点的问题。"
-                if response_lang == 'English':
-                    error_msg = f"API returned empty response (used {usage.completion_tokens} tokens). This may be an API endpoint issue."
+                st.warning(f"⚠️ API 返回了空响应（使用了 {usage.completion_tokens} tokens），正在使用模拟响应..." if response_lang == 'Chinese' else f"⚠️ API returned empty response (used {usage.completion_tokens} tokens), using mock response...")
                 
-                return {
-                    'immediate_advice': error_msg,
-                    'training_plan': error_msg,
-                    'strategy': error_msg
-                }
+                # Fallback to mock response
+                from mock_coach_response import get_mock_coach_advice
+                return get_mock_coach_advice(
+                    user_profile,
+                    goal,
+                    today_metrics,
+                    historical_runs,
+                    subjective_feeling,
+                    response_lang
+                )
             
             # Try to extract JSON from response
             try:
@@ -912,6 +916,18 @@ with st.sidebar:
 st.title(t('app_title'))
 st.markdown(f"### {t('app_subtitle')}")
 
+# Author and app note
+st.markdown("---")
+st.markdown("**Built by River**")
+st.info("ℹ️ " + ("本应用目前仅支持 Garmin 跑步数据分析" if language == 'Chinese' else "This app currently supports Garmin Running Data only"))
+st.markdown("---")
+
+# Author and app note
+st.markdown("---")
+st.markdown("**Built by River**")
+st.info("ℹ️ " + ("本应用目前仅支持 Garmin 跑步数据分析" if language == 'Chinese' else "This app currently supports Garmin Running Data only"))
+st.markdown("---")
+
 # File uploader for CSV (Today's Run)
 st.subheader(t('todays_run'))
 
@@ -958,11 +974,59 @@ subjective_feeling = st.text_area(
     height=100
 )
 
-# Analyze button
-if st.button(t('analyze_button'), type="primary", use_container_width=True):
-    if not os.path.exists("Running_Today.csv"):
-        st.error(t('upload_csv_first'))
-        st.stop()
+# Buttons section
+col1, col2 = st.columns(2)
+
+# Button 1: Get Training Plan & Strategy (without today's data and historical data)
+with col1:
+    get_plan_button = st.button("📅 " + ("获取训练计划与策略" if language == 'Chinese' else "Get Training Plan & Strategy"), use_container_width=True)
+
+# Button 2: Analyze & Coach Me (can work without today's data)
+with col2:
+    analyze_button_clicked = st.button(t('analyze_button'), type="primary", use_container_width=True)
+
+# Handle "Get Training Plan & Strategy" button
+if get_plan_button:
+    # Get training plan and strategy without today's data and historical data
+    with st.spinner("正在生成训练计划..." if language == 'Chinese' else "Generating training plan..."):
+        # Create empty today_metrics for this case
+        empty_today_metrics = {
+            'basic_stats': {},
+            'cardiac_drift': {},
+            'pacing_variance': {}
+        }
+        
+        coach_response = get_coach_advice(
+            st.session_state.user_profile,
+            st.session_state.goal,
+            empty_today_metrics,
+            [],  # No historical runs
+            ""  # No subjective feeling
+        )
+        
+        # Display training plan
+        st.header(t('detailed_plan'))
+        training_plan = coach_response.get('training_plan', '')
+        if training_plan:
+            st.markdown(training_plan)
+        else:
+            st.warning("训练计划暂不可用" if language == 'Chinese' else "Training plan not available")
+        
+        # Display strategy
+        st.header(t('training_strategy'))
+        strategy = coach_response.get('strategy', '')
+        if strategy:
+            st.markdown(strategy)
+        else:
+            st.warning("训练策略暂不可用" if language == 'Chinese' else "Training strategy not available")
+
+# Handle "Analyze & Coach Me" button
+if analyze_button_clicked:
+    # Check if today's data exists, but don't stop if it doesn't
+    has_today_data = os.path.exists("Running_Today.csv")
+    
+    if not has_today_data:
+        st.info("ℹ️ " + ("未上传今日数据。将基于您的目标和用户资料提供建议。" if language == 'Chinese' else "No today's data uploaded. Will provide advice based on your goals and profile."))
     
     # Build historical index if CSV file exists but index is not built
     if os.path.exists("Garmin_Runing.csv") and not st.session_state.knowledge_base_built:
@@ -976,31 +1040,45 @@ if st.button(t('analyze_button'), type="primary", use_container_width=True):
                 st.info("将继续分析，但不会使用历史数据上下文。" if language == 'Chinese' else "Will continue analysis without historical data context.")
     
     if not st.session_state.knowledge_base_built:
-        st.warning(t('no_historical_warning'))
+        st.info("ℹ️ " + ("未检测到历史数据。将基于您的目标和用户资料提供建议。" if language == 'Chinese' else "No historical data detected. Will provide advice based on your goals and profile."))
     
-    # Analyze CSV file (Today's run)
-    with st.spinner(t('analyzing')):
-        try:
-            today_analysis = analyze_csv("Running_Today.csv")
-        except Exception as e:
-            st.error(f"Error analyzing CSV file: {e}")
-            import traceback
-            st.error(f"Traceback: {traceback.format_exc()}")
-            st.stop()
+    # Analyze CSV file (Today's run) - only if file exists
+    today_analysis = {}
+    if has_today_data:
+        with st.spinner(t('analyzing')):
+            try:
+                today_analysis = analyze_csv("Running_Today.csv")
+            except Exception as e:
+                st.error(f"Error analyzing CSV file: {e}")
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
+                # Continue with empty analysis instead of stopping
+                today_analysis = {}
+    else:
+        # Create empty analysis structure
+        today_analysis = {
+            'basic_stats': {},
+            'cardiac_drift': {},
+            'pacing_variance': {}
+        }
     
     # Convert pace based on unit selection
     pace_unit = st.session_state.pace_unit
-    basic_stats = today_analysis.get('basic_stats', {})
-    distance_km = basic_stats.get('total_distance_km', 0)
-    avg_pace_km = basic_stats.get('avg_pace')
+    basic_stats = today_analysis.get('basic_stats', {}) if today_analysis else {}
+    distance_km = basic_stats.get('total_distance_km', 0) if basic_stats else 0
+    avg_pace_km = basic_stats.get('avg_pace') if basic_stats else None
     
-    # Convert distance
-    if pace_unit == 'mile':
-        distance_display = distance_km / 1.60934
-        distance_unit = " mi"
+    # Convert distance (only if we have data)
+    if distance_km > 0:
+        if pace_unit == 'mile':
+            distance_display = distance_km / 1.60934
+            distance_unit = " mi"
+        else:
+            distance_display = distance_km
+            distance_unit = " km"
     else:
-        distance_display = distance_km
-        distance_unit = " km"
+        distance_display = 0
+        distance_unit = " km" if pace_unit == 'km' else " mi"
     
     # Convert pace
     def convert_pace_to_unit(pace_str, target_unit):
@@ -1025,48 +1103,50 @@ if st.button(t('analyze_button'), type="primary", use_container_width=True):
     avg_pace_display = convert_pace_to_unit(avg_pace_km, pace_unit)
     pace_unit_label = "min/mi" if pace_unit == 'mile' else "min/km"
     
-    # Display key metrics
-    st.header(t('key_metrics'))
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            t('distance'),
-            f"{distance_display:.2f}{distance_unit}" if distance_display else "N/A"
-        )
-    
-    with col2:
-        drift = today_analysis.get('cardiac_drift', {}).get('drift_percentage')
-        if drift is not None:
-            drift_delta = None
-            if drift > -5:
-                drift_delta = "Good" if language == 'English' else "良好"
-            elif drift < -10:
-                drift_delta = "Concerning" if language == 'English' else "需关注"
+    # Display key metrics (only if we have today's data)
+    if has_today_data and distance_km > 0:
+        st.header(t('key_metrics'))
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
             st.metric(
-                t('cardiac_drift'),
-                f"{drift:.2f}%",
-                delta=drift_delta
+                t('distance'),
+                f"{distance_display:.2f}{distance_unit}" if distance_display else "N/A"
             )
-        else:
-            st.metric(t('cardiac_drift'), "N/A")
-    
-    with col3:
-        avg_hr = basic_stats.get('avg_heart_rate')
-        st.metric(
-            t('avg_hr'),
-            f"{avg_hr:.1f} bpm" if avg_hr else "N/A"
-        )
-    
-    with col4:
-        st.metric(
-            t('avg_pace'),
-            f"{avg_pace_display} {pace_unit_label}" if avg_pace_display != "N/A" else "N/A"
-        )
+        
+        with col2:
+            drift = today_analysis.get('cardiac_drift', {}).get('drift_percentage') if today_analysis.get('cardiac_drift') else None
+            if drift is not None:
+                drift_delta = None
+                if drift > -5:
+                    drift_delta = "Good" if language == 'English' else "良好"
+                elif drift < -10:
+                    drift_delta = "Concerning" if language == 'English' else "需关注"
+                st.metric(
+                    t('cardiac_drift'),
+                    f"{drift:.2f}%",
+                    delta=drift_delta
+                )
+            else:
+                st.metric(t('cardiac_drift'), "N/A")
+        
+        with col3:
+            avg_hr = basic_stats.get('avg_heart_rate') if basic_stats else None
+            st.metric(
+                t('avg_hr'),
+                f"{avg_hr:.1f} bpm" if avg_hr else "N/A"
+            )
+        
+        with col4:
+            st.metric(
+                t('avg_pace'),
+                f"{avg_pace_display} {pace_unit_label}" if avg_pace_display != "N/A" else "N/A"
+            )
     
     # Search similar runs (used internally for AI analysis, not displayed)
+    # Only search if we have today's data and historical index
     historical_runs = []
-    if st.session_state.knowledge_base_built:
+    if has_today_data and st.session_state.knowledge_base_built:
         # Double-check that files actually exist before searching
         if not (os.path.exists("garmin.index") and os.path.exists("garmin_data.pkl")):
             st.warning("⚠️ 历史数据索引文件不存在，请重新构建索引。" if language == 'Chinese' else "⚠️ Historical data index files not found. Please rebuild index.")
@@ -1075,18 +1155,22 @@ if st.button(t('analyze_button'), type="primary", use_container_width=True):
             # Silently search for historical context (used in AI analysis)
             try:
                 # Create query from today's run
-                distance = today_analysis['basic_stats'].get('total_distance_km', 0)
+                basic_stats = today_analysis.get('basic_stats', {})
+                distance = basic_stats.get('total_distance_km', 0) if basic_stats else 0
                 if distance == 0:
-                    distance = today_analysis['basic_stats'].get('total_distance', 0)
-                pace = today_analysis['basic_stats'].get('avg_pace') or today_analysis['basic_stats'].get('avg_pace_min_km', 'N/A')
+                    distance = basic_stats.get('total_distance', 0) if basic_stats else 0
+                pace = basic_stats.get('avg_pace') if basic_stats else None
+                if not pace:
+                    pace = basic_stats.get('avg_pace_min_km', 'N/A') if basic_stats else 'N/A'
                 
-                # Use language-appropriate query
-                if language == 'Chinese':
-                    query = f"距离: {distance} 公里, 配速: {pace} 每公里"
-                else:
-                    query = f"Distance: {distance} km, Pace: {pace} per km"
-                
-                historical_runs = search_similar_runs(query, k=3)
+                if distance > 0 and pace != 'N/A':
+                    # Use language-appropriate query
+                    if language == 'Chinese':
+                        query = f"距离: {distance} 公里, 配速: {pace} 每公里"
+                    else:
+                        query = f"Distance: {distance} km, Pace: {pace} per km"
+                    
+                    historical_runs = search_similar_runs(query, k=3)
             except Exception as search_error:
                 # Silently fail - historical context is optional
                 historical_runs = []
@@ -1127,34 +1211,35 @@ if st.button(t('analyze_button'), type="primary", use_container_width=True):
     else:
         st.info("训练策略暂不可用，请检查 API 连接或稍后重试" if language == 'Chinese' else "Training strategy not available, please check API connection or try again later")
     
-    # Export button - Excel format
-    st.divider()
-    st.subheader("📥 " + ("导出结果" if language == 'Chinese' else "Export Results"))
-    
-    # Generate Excel report
-    try:
-        from io import BytesIO
+    # Export button - Excel format (only if we have today's data)
+    if has_today_data:
+        st.divider()
+        st.subheader("📥 " + ("导出结果" if language == 'Chinese' else "Export Results"))
         
-        # Create Excel file in memory
-        buffer = BytesIO()
-        
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            # Sheet 1: Key Metrics
-            basic_stats = today_analysis.get('basic_stats', {})
-            metrics_data = {
-                ('Metric' if language == 'English' else '指标'): [
-                    'Distance' if language == 'English' else '距离',
-                    'Duration' if language == 'English' else '时长',
-                    'Avg HR' if language == 'English' else '平均心率',
-                    'Avg Pace' if language == 'English' else '平均配速'
-                ],
-                ('Value' if language == 'English' else '值'): [
-                    f"{basic_stats.get('total_distance_km', 0):.2f} km",
-                    f"{basic_stats.get('total_duration_minutes', 0):.2f} {'minutes' if language == 'English' else '分钟'}",
-                    f"{basic_stats.get('avg_heart_rate', 'N/A')} bpm",
-                    basic_stats.get('avg_pace', 'N/A')
-                ]
-            }
+        # Generate Excel report
+        try:
+            from io import BytesIO
+            
+            # Create Excel file in memory
+            buffer = BytesIO()
+            
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                # Sheet 1: Key Metrics
+                basic_stats = today_analysis.get('basic_stats', {}) if today_analysis else {}
+                metrics_data = {
+                    ('Metric' if language == 'English' else '指标'): [
+                        'Distance' if language == 'English' else '距离',
+                        'Duration' if language == 'English' else '时长',
+                        'Avg HR' if language == 'English' else '平均心率',
+                        'Avg Pace' if language == 'English' else '平均配速'
+                    ],
+                    ('Value' if language == 'English' else '值'): [
+                        f"{basic_stats.get('total_distance_km', 0):.2f} km" if basic_stats else "N/A",
+                        f"{basic_stats.get('total_duration_minutes', 0):.2f} {'minutes' if language == 'English' else '分钟'}" if basic_stats else "N/A",
+                        f"{basic_stats.get('avg_heart_rate', 'N/A')} bpm" if basic_stats else "N/A",
+                        basic_stats.get('avg_pace', 'N/A') if basic_stats else "N/A"
+                    ]
+                }
             metrics_df = pd.DataFrame(metrics_data)
             metrics_df.to_excel(writer, sheet_name='Key Metrics' if language == 'English' else '关键指标', index=False)
             
