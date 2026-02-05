@@ -42,5 +42,5 @@ This application can be deployed to `ai-builders.space` platform. See `deploy-co
 - Python 3.11+
 - Streamlit
 - OpenAI API access (via AI Builder Space)
-- Garmin running data (CSV format)
-- TCX files for current run analysis
+- Garmin historical running data (CSV format)
+- Garmin latest running data (CSV format)
